@@ -1,0 +1,834 @@
+import torch
+torch.cuda.is_available()
+
+import pandas as pd
+import re
+import collections
+from tqdm import tqdm
+import tqdm.notebook as tq
+import spacy
+import numpy as np
+from sklearn.preprocessing import LabelEncoder
+from keras.preprocessing.text import Tokenizer
+from keras.models import Sequential
+from keras.layers import Dense
+from keras.preprocessing.sequence import pad_sequences
+from keras.layers import Input, Dense, Dropout, Embedding, LSTM, Flatten
+from keras.models import Model
+from keras.utils import to_categorical
+from keras.callbacks import ModelCheckpoint
+import seaborn as sns
+from keras.models import Sequential
+from keras.layers import Dense, Activation, Embedding, LSTM, Flatten, GlobalMaxPool1D, MaxPooling1D, Dropout, Conv1D, \
+    Conv3D, MaxPooling3D, GlobalMaxPool3D,SpatialDropout1D
+from keras.callbacks import ReduceLROnPlateau, EarlyStopping, ModelCheckpoint
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+
+plt.style.use('ggplot')
+from IPython.core.display import display, HTML
+
+display(HTML("<style>.container { width:100% !important; }</style>"))
+from sklearn.metrics import accuracy_score
+
+def preprocessing(sentence):
+  # preprocessing
+  sentence = sentence.lower()
+  sentence = sentence.replace("\x92", "’")
+  sentence = sentence.replace("\xa0", "’")
+  sentence = decontract(sentence)
+  # sentence = cleanPunc(sentence)
+  # sentence = sentence.replace(r'[?|!|\'|"|#|:]', " ")
+  # sentence = sentence.replace(r'[|>|<|*|\|^|_|~|.|,|)|(|\|/]', " ")
+  # sentence = sentence.replace(r'[|>|<|*|\|^|_|~|.|,|)|(|\|/]', " ")
+  # sentence = sentence.replace("[", " ")
+  # sentence = sentence.replace("]", " ")
+  sentence = sentence.strip()
+  sentence = sentence.replace("\n", " ")
+  sentence = emoji_pattern.sub(r'', sentence)
+  return ' '.join(sentence.split())
+
+def decontract(sentence):
+    # specific
+    sentence = re.sub(r"won’t", "will not", sentence)
+    sentence = re.sub(r"can\’t", "can not", sentence)
+    sentence = re.sub(r"won\’t", "will not", sentence)
+    sentence = re.sub(r"can’t", "can not", sentence)
+    sentence = re.sub("cant", "can not", sentence)
+    sentence = re.sub("dont", "do not", sentence)
+    sentence = re.sub("y\’", "you ", sentence)
+
+    # general
+    sentence = re.sub(r"n\’t", " not", sentence)
+    sentence = re.sub(r"\’re", " are", sentence)
+    sentence = re.sub(r"\’s", " is", sentence)
+    sentence = re.sub(r"\’d", " would", sentence)
+    sentence = re.sub(r"\’ll", " will", sentence)
+    sentence = re.sub(r"\’t", " not", sentence)
+    sentence = re.sub(r"\’ve", " have", sentence)
+    sentence = re.sub(r"\’m", " am", sentence)
+    sentence = re.sub(r"n\'t", " not", sentence)
+
+    sentence = re.sub(r"\'re", " are", sentence)
+    sentence = re.sub(r"\'s", " is", sentence)
+    sentence = re.sub(r"\'d", " would", sentence)
+    sentence = re.sub(r"\'ll", " will", sentence)
+    sentence = re.sub(r"\'t", " not", sentence)
+    sentence = re.sub(r"\'ve", " have", sentence)
+    sentence = re.sub(r"\'m", " am", sentence)
+    return sentence
+
+
+def cleanPunc(sentence):
+    cleaned = re.sub(r'[?|!|\'|"|#]', r'', sentence)
+    cleaned = re.sub(r'[.|,|)|(|\|/]', r' ', cleaned)
+    cleaned = cleaned.strip()
+    cleaned = cleaned.replace("\n", " ")
+    return cleaned
+
+
+def removeStopWords(sentence):
+    global re_stop_words
+    return re_stop_words.sub("", sentence)
+
+
+stopwords = set(['br', 'the', 'i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', "you're", "you've", \
+                 "you'll", "you'd", 'your', 'yours', 'yourself', 'yourselves', 'he', 'him', 'his', 'himself', \
+                 'she', "she's", 'her', 'hers', 'herself', 'it', "it's", 'its', 'itself', 'they', 'them', 'their', \
+                 'theirs', 'themselves', 'what', 'which', 'who', 'whom', 'this', 'that', "that'll", 'these', 'those', \
+                 'am', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'having', 'do', 'does', \
+                 'did', 'doing', 'a', 'an', 'the', 'and', 'but', 'if', 'or', 'because', 'as', 'until', 'while', 'of', \
+                 'at', 'by', 'for', 'with', 'about', 'against', 'between', 'into', 'through', 'during', 'before',
+                 'after', 'above', 'below', 'to', 'from', 'up', 'down', 'in', 'out', 'on', 'off', 'over', 'under',
+                 'again',
+                 'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'any', 'both',
+                 'each', 'few',
+                 'more', 'most', 'other', 'some', 'such', 'only', 'own', 'same', 'so', 'than', 'too', 'very', \
+                 's', 't', 'can', 'will', 'just', 'don', "don't", 'should', "should've", 'now', 'd', 'll', 'm', 'o',
+                 're', 've', 'y', 'ain', 'aren', "aren't", 'couldn', "couldn't", 'didn', "didn't", 'doesn', "doesn't",
+                 'hadn', \
+                 "hadn't", 'hasn', "hasn't", 'haven', "haven't", 'isn', "isn't", 'ma', 'mightn', "mightn't", 'mustn', \
+                 "mustn't", 'needn', "needn't", 'shan', "shan't", 'shouldn', "shouldn't", 'wasn', "wasn't", 'weren',
+                 "weren't", 'won', "won't", 'wouldn', "wouldn't"])
+re_stop_words = re.compile(r"\b(" + "|".join(stopwords) + ")\\W", re.I)
+
+emoji_pattern = re.compile("["
+                           u"\U0001F600-\U0001F64F"  # emoticons
+                           u"\U0001F300-\U0001F5FF"  # symbols & pictographs
+                           u"\U0001F680-\U0001F6FF"  # transport & map symbols
+                           u"\U0001F1E0-\U0001F1FF"  # flags (iOS)
+                           u"\U00002702-\U000027B0"
+                           u"\U000024C2-\U0001F251"
+                           "]+", flags=re.UNICODE)
+
+
+def prepare_targets(y_data):
+    le = LabelEncoder()
+    le.fit(y_data)
+    y_data_enc = le.transform(y_data)
+    return y_data_enc
+
+
+D_PATH = '/content/drive/MyDrive/자연어처리_플젝'
+
+dfDATA = pd.DataFrame()
+for v_data_name in ['train', 'dev', 'test']:
+    f_name = f'{D_PATH}/friends_{v_data_name}.json'  # 경로 변경 필요
+    dfJSON = pd.read_json(f_name)
+    for v_row_num in range(0, len(dfJSON)):
+        dfTEMP = dfJSON.loc[v_row_num]
+        dfTEMP = dfTEMP[~dfTEMP.isnull()].to_list()
+        dfTEMP = pd.DataFrame.from_dict(pd.json_normalize(dfTEMP), orient='columns')
+        dfTEMP['conversation'] = f'conv_{v_row_num}'
+        dfTEMP['id'] = v_data_name
+        dfDATA = pd.concat([dfDATA, dfTEMP]).reset_index(drop=True)
+        
+dfDATA
+
+en_data = pd.read_csv(f'{D_PATH}/en_data.csv')
+en_data['id'] = 'realtest'
+en_data = en_data[['id','speaker','utterance']]
+dfDATA = dfDATA[['id','speaker','utterance', 'emotion']]
+dfDATA = pd.concat([dfDATA, en_data]).reset_index(drop=True)
+dfDATA
+
+dfDATA['utt_clean'] = dfDATA['utterance'].str.lower()
+dfDATA['utt_clean'] = dfDATA['utt_clean'].apply(lambda x: x.replace("\x92", "’"))
+dfDATA['utt_clean'] = dfDATA['utt_clean'].apply(lambda x: x.replace("\xa0", "’"))
+dfDATA['utt_clean'] = dfDATA['utt_clean'].apply(decontract)
+# dfDATA['utt_clean'] = dfDATA['utt_clean'].apply(lambda x: re.sub(r'[?|!|\'|"|#|:]', r' ', x))
+# dfDATA['utt_clean'] = dfDATA['utt_clean'].apply(lambda x: re.sub(r'[|>|<|*|\|^|_|~|.|,|)|(|\|/]', r' ', x))
+# dfDATA['utt_clean'] = dfDATA['utt_clean'].apply(lambda x: x.replace("[", " "))
+# dfDATA['utt_clean'] = dfDATA['utt_clean'].apply(lambda x: x.replace("]", " "))
+dfDATA['utt_clean'] = dfDATA['utt_clean'].apply(lambda x: x.strip())
+dfDATA['utt_clean'] = dfDATA['utt_clean'].apply(lambda x: x.replace("\n", " "))
+# dfDATA['utt_clean'] = dfDATA['utt_clean'].apply(lambda x: emoji_pattern.sub(r'', x))
+dfDATA['utt_clean'] = dfDATA['utt_clean'].apply(lambda x: ' '.join(x.split()))
+dfDATA['utt_clean']
+
+
+# !python -m spacy download en_core_web_lg
+# import en_core_web_lg
+# nlp = en_core_web_lg.load(disable=['parser', 'ner'])
+
+# def lemmatization(dfDATA):
+#   lst_document = dfDATA['utt_clean'].values.tolist()
+#   lst_RESULT = []
+#   for v_idx, v_doc in tq.tqdm(enumerate(nlp.pipe(lst_document)), total=len(lst_document)):
+#     # v_lemma_sent = ' '.join([f'{token.lemma_}/{token.pos_}' if token.lemma_ not in ['-PRON-'] else '' for token in v_doc
+#     #                         #  if token.pos_ in ['NOUN', 'ADJ', 'VERB', 'ADV', 'PROPN']
+#     #                          ]
+#     #                         )
+#     v_lemma_sent = ' '.join([f'{token.lemma_}' if token.lemma_ not in ['-PRON-'] else '' for token in v_doc
+#                             #  if token.pos_ in ['NOUN', 'ADJ', 'VERB', 'ADV', 'PROPN']
+#                              ]
+#                             )
+#     lst_RESULT.append(v_lemma_sent)
+#   dfDATA['utt_cln_lemma'] = lst_RESULT
+  
+  # concat conversation and utt (except Speaker)
+dfDATA['input_txt'] = dfDATA['speaker'] + ' ' + dfDATA['utt_clean'] 
+  # dfDATA['conversation'] + ' ' + 
+dfDATA['input_txt'] = dfDATA['input_txt'].str.lower()
+  # return dfDATA
+
+# dfDATA = lemmatization(dfDATA)
+
+len_result = [len(s) for s in dfDATA.input_txt]
+
+print('텍스트의 최대 길이 : {}'.format(np.max(len_result)))
+print('텍스트의 평균 길이 : {}'.format(np.mean(len_result)))
+print('텍스트의 90% 길이 : {}'.format(pd.Series(len_result).quantile(.95)))
+
+most_common_cat = pd.DataFrame(dfDATA[dfDATA['id']=='train'].groupby('emotion').size()).reset_index()
+most_common_cat.columns = ['emotion', 'count']
+most_common_cat['class_weight'] = len(most_common_cat) / most_common_cat['count']
+class_weight = {}
+categories = ['anger',
+              'disgust',
+              'fear',
+              'joy',
+              'neutral',
+              'non-neutral',
+              'sadness',
+              'surprise']
+for index, label in enumerate(categories):
+    class_weight[index] = most_common_cat[most_common_cat['emotion'] == label]['class_weight'].values[0]
+
+print(most_common_cat)
+print(class_weight)
+
+from keras.preprocessing.text import Tokenizer, text_to_word_sequence
+from keras.preprocessing import sequence
+
+tokenizer = Tokenizer()
+tokenizer.fit_on_texts(dfDATA.input_txt)
+X = tokenizer.texts_to_sequences(dfDATA.input_txt)
+dfDATA['words'] = X
+
+maxlen = 111
+X = list(sequence.pad_sequences(dfDATA.words, maxlen=maxlen))
+
+dfDATA['emotion'] = dfDATA['emotion'].fillna('zrealtest')
+categories = dfDATA.groupby('emotion').size().index.tolist()
+category_int = {}
+int_category = {}
+for i, k in enumerate(categories):
+    category_int.update({k:i})
+    int_category.update({i:k})
+print(category_int)
+    
+# prepared data
+dfDATA['c2id'] = dfDATA['emotion'].apply(lambda x: category_int[x])
+tokenizer = Tokenizer()
+tokenizer.fit_on_texts(dfDATA.input_txt)
+X = tokenizer.texts_to_sequences(dfDATA.input_txt)
+dfDATA['words'] = X
+
+maxlen = 152
+X = list(sequence.pad_sequences(dfDATA.words, maxlen=maxlen))
+
+word_index = tokenizer.word_index
+
+EMBEDDING_DIM = 100
+
+embeddings_index = {}
+f = open(f'{D_PATH}/glove.6B.100d.txt')
+for line in f:
+    values = line.split()
+    word = values[0]
+    coefs = np.asarray(values[1:], dtype='float32')
+    embeddings_index[word] = coefs
+f.close()
+
+print('Found %s unique tokens.' % len(word_index))
+print('Total %s word vectors.' % len(embeddings_index))
+
+dfID = pd.DataFrame(dfDATA['id'].drop_duplicates())
+dfID
+dev_index = dfID[dfID['id']=='dev'].index[0]
+test_index = dfID[dfID['id']=='test'].index[0]
+realtest_index = dfID[dfID['id']=='realtest'].index[0]
+
+print(len(dfDATA[dfDATA['id']=='train']))
+print(len(dfDATA[dfDATA['id']=='dev']))
+print(len(dfDATA[dfDATA['id']=='test']))
+
+# prepared data 
+from keras.utils import np_utils
+X = np.array(X)
+Y = np_utils.to_categorical(list(dfDATA[dfDATA['id']!='realtest']['c2id']))
+
+x_train = X[:dev_index]
+y_train = Y[:dev_index]
+
+x_dev = X[dev_index:test_index]
+y_dev = Y[dev_index:test_index]
+
+x_test = X[test_index:realtest_index]
+y_test = Y[test_index:realtest_index]
+
+x_realtest = X[realtest_index:]
+
+train_tf = len(x_train)==len(dfDATA[dfDATA['id']=='train'])
+dev_tf = len(x_dev)==len(dfDATA[dfDATA['id']=='dev'])
+test_tf = len(x_test)==len(dfDATA[dfDATA['id']=='test'])
+print(f'len(x_train)가 나눈거랑 같은가? {train_tf}')
+print(f'len(x_dev)가 나눈거랑 같은가?   {dev_tf}')
+print(f'len(x_test)가 나눈거랑 같은가?  {test_tf}')
+
+# EMBED_SIZE = 20
+# BATCH_SIZE = 16
+
+EMBED_SIZE = 200
+NUM_FILTERS = 256 
+NUM_WORDS = 3 
+BATCH_SIZE = 64 
+NUM_EPOCHS = 20
+
+# max_words = len(tokenizer.word_index) + 1
+max_words = 7192
+model = Sequential()
+model.add(Embedding(max_words, EMBED_SIZE, input_length=maxlen))
+model.add(SpatialDropout1D(0.2))
+model.add(GlobalMaxPool1D())
+model.add(Dense(8, activation='softmax'))
+model.compile(optimizer="adam", loss='categorical_crossentropy', metrics=["accuracy"])
+
+model.summary()
+
+callbacks = [
+    ReduceLROnPlateau(),
+    EarlyStopping(patience=5),
+    ModelCheckpoint(filepath=f'{D_PATH}/e_model-simple.h5', save_best_only=True)
+]
+
+
+history = model.fit(x_train, y_train,
+                    epochs=NUM_EPOCHS,
+                    # class_weight=class_weight,
+                    batch_size=BATCH_SIZE,
+                    validation_data=(x_dev, y_dev),
+                    callbacks=callbacks)
+                    
+                    from tensorflow.keras.models import load_model
+results = pd.DataFrame()
+
+dnn_model = load_model(f'{D_PATH}/e_model-simple.h5')
+metrics = dnn_model.evaluate(x_test, y_test)
+print("{}: {}".format(dnn_model.metrics_names[1], metrics[1]))
+
+dnn_predictions = dnn_model.predict(x_test)
+dnn_predictions = np.argmax(dnn_predictions, axis=1)
+print(accuracy_score(np.argmax(np.array(y_test), axis=1), dnn_predictions))
+
+dnn_results = accuracy_score(np.argmax(np.array(y_test), axis=1), dnn_predictions)
+results.loc[0, 'DNN'] = dnn_results
+print(f'성능>>>>>>>>> \n{results}')
+
+from keras.layers import Dense, Activation, Embedding, Flatten, GlobalMaxPool1D, Dropout, Conv1D
+
+model = Sequential()
+model.add(Embedding(max_words, EMBED_SIZE, input_length=maxlen))
+model.add(SpatialDropout1D(0.2))
+model.add(Conv1D(NUM_FILTERS, NUM_WORDS, activation='relu')) #padding='valid', strides=1 
+model.add(GlobalMaxPool1D())
+model.add(Dense(8, activation='softmax'))
+
+model.summary()
+
+
+model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=["accuracy"])
+
+callbacks = [
+    ReduceLROnPlateau(),
+    EarlyStopping(patience=5),
+    ModelCheckpoint(filepath=f'{D_PATH}/e_model-conv1d.h5', save_best_only=True)
+]
+
+history = model.fit(x_train, y_train,
+                    # class_weight=class_weight,
+                    epochs=NUM_EPOCHS,
+                    batch_size=BATCH_SIZE,
+                    validation_data=(x_dev, y_dev),
+                    callbacks=callbacks)
+                    
+                    cnn_model = load_model(f'{D_PATH}/e_model-conv1d.h5')
+metrics = cnn_model.evaluate(x_test, y_test)
+print("{}: {}".format(cnn_model.metrics_names[1], metrics[1]))
+
+cnn_predictions = cnn_model.predict(x_test)
+cnn_predictions = np.argmax(cnn_predictions, axis=1)
+print(accuracy_score(np.argmax(np.array(y_test), axis=1), cnn_predictions))
+
+cnn_results = accuracy_score(np.argmax(np.array(y_test), axis=1), cnn_predictions)
+results.loc[0, 'CNN'] = cnn_results
+print(f'성능>>>>>>>>> \n{results}')
+
+from keras.layers import Dense, Activation, Embedding, Flatten, GlobalMaxPool1D, Dropout, Conv1D
+
+model = Sequential()
+model.add(Embedding(max_words, EMBED_SIZE, input_length=maxlen))
+model.add(SpatialDropout1D(0.2))
+model.add(LSTM(100, dropout=0.2, recurrent_dropout=0.2))
+model.add(Dense(8, activation='softmax'))
+
+model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=["accuracy"])
+
+model.summary()
+
+
+
+callbacks = [
+    ReduceLROnPlateau(),
+    EarlyStopping(patience=5),
+    ModelCheckpoint(filepath=f'{D_PATH}/e_model-lstm.h5', save_best_only=True)
+]
+
+history = model.fit(x_train, y_train,
+                    # class_weight=class_weight,
+                    epochs=10,
+                    batch_size=BATCH_SIZE,
+                    validation_data=(x_dev, y_dev),
+                    callbacks=callbacks)
+                    
+                    lstm_model = load_model(f'{D_PATH}/e_model-lstm.h5')
+metrics = lstm_model.evaluate(x_test, y_test)
+print("{}: {}".format(lstm_model.metrics_names[1], metrics[1]))
+
+lstm_predictions = lstm_model.predict(x_test)
+lstm_predictions = np.argmax(lstm_predictions, axis=1)
+print(accuracy_score(np.argmax(np.array(y_test), axis=1), lstm_predictions))
+
+lstm_results = accuracy_score(np.argmax(np.array(y_test), axis=1), lstm_predictions)
+results.loc[0, 'LSTM'] = lstm_results
+print(f'성능>>>>>>>>> \n{results}')
+
+from keras.layers import GlobalAveragePooling1D, BatchNormalization, concatenate
+from keras.layers import Reshape, merge, Concatenate, Lambda, Average
+
+inp = Input(shape=(maxlen,), dtype='int32')
+embedding = embedding_layer(inp)
+stacks = []
+for kernel_size in [2, 3, 4]:
+    conv = Conv1D(64, kernel_size, padding='same', activation='relu', strides=1)(embedding)
+    pool = MaxPooling1D(pool_size=3)(conv)
+    drop = Dropout(0.5)(pool)
+    stacks.append(drop)
+
+merged = Concatenate()(stacks)
+flatten = Flatten()(merged)
+drop = Dropout(0.5)(flatten)
+outp = Dense(8, activation='softmax')(drop)
+
+TextCNN = Model(inputs=inp, outputs=outp)
+TextCNN.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+
+TextCNN.summary()
+
+callbacks = [
+    ReduceLROnPlateau(),
+    EarlyStopping(patience=5),
+    ModelCheckpoint(filepath=f'{D_PATH}/e_text-cnn-conv1d.h5', save_best_only=True)
+]
+
+
+textcnn_history = TextCNN.fit(x_train, 
+                              y_train, 
+                              # class_weight=class_weight,
+                              batch_size=BATCH_SIZE, 
+                              epochs=NUM_EPOCHS,
+                              callbacks=callbacks, 
+                              validation_data=(x_dev, y_dev))
+                              
+                              # Bidrectional LSTM with convolution
+# from https://www.kaggle.com/eashish/bidirectional-gru-with-convolution
+
+from keras.layers import GlobalAveragePooling1D, BatchNormalization, concatenate
+from keras.layers import Reshape, merge, Concatenate, Lambda, Average
+
+from keras.layers import Dense, Input, LSTM, Bidirectional, Activation, Conv1D, GRU, TimeDistributed
+from keras.layers import Dropout, Embedding, GlobalMaxPooling1D, MaxPooling1D, Add, Flatten, SpatialDropout1D
+
+inp = Input(shape=(maxlen,), dtype='int32')
+x = embedding_layer(inp)
+x = SpatialDropout1D(0.2)(x)
+x = Bidirectional(GRU(128, return_sequences=True, dropout=0.1, recurrent_dropout=0.1))(x)
+x = Conv1D(64, kernel_size=3)(x)
+avg_pool = GlobalAveragePooling1D()(x)
+max_pool = GlobalMaxPooling1D()(x)
+x = concatenate([avg_pool, max_pool])
+outp = Dense(8, activation="softmax")(x)
+
+BiGRU = Model(inp, outp)
+BiGRU.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['acc'])
+
+BiGRU.summary()
+
+# training
+callbacks = [
+    ReduceLROnPlateau(),
+    EarlyStopping(patience=5),
+    ModelCheckpoint(filepath=f'{D_PATH}/e_lstm_gru.h5', save_best_only=True)
+]
+
+
+bigru_history = BiGRU.fit(x_train, 
+                          y_train, 
+                              batch_size=BATCH_SIZE, 
+                              epochs=NUM_EPOCHS, 
+                          # class_weight=class_weight,
+                          callbacks=callbacks,
+                          validation_data=(x_dev, y_dev))
+                          
+                          
+                          from keras import backend as K
+from keras.engine.topology import Layer
+from keras import initializers, regularizers, constraints
+
+class Attention(Layer):
+    def __init__(self, step_dim,
+                 W_regularizer=None, b_regularizer=None,
+                 W_constraint=None, b_constraint=None,
+                 bias=True, **kwargs):
+        self.supports_masking = True
+        self.init = initializers.get('glorot_uniform')
+        self.W_regularizer = regularizers.get(W_regularizer)
+        self.b_regularizer = regularizers.get(b_regularizer)
+        self.W_constraint = constraints.get(W_constraint)
+        self.b_constraint = constraints.get(b_constraint)
+        self.bias = bias
+        self.step_dim = step_dim
+        self.features_dim = 0
+        super(Attention, self).__init__(**kwargs)
+
+    def build(self, input_shape):
+        assert len(input_shape) == 3
+        self.W = self.add_weight(shape=(input_shape[-1],),
+                                 initializer=self.init,
+                                 name='{}_W'.format(self.name),
+                                 regularizer=self.W_regularizer,
+                                 constraint=self.W_constraint)
+        self.features_dim = input_shape[-1]
+        if self.bias:
+            self.b = self.add_weight(shape=(input_shape[1],),
+                                     initializer='zero',
+                                     name='{}_b'.format(self.name),
+                                     regularizer=self.b_regularizer,
+                                     constraint=self.b_constraint)
+        else:
+            self.b = None
+        self.built = True
+
+    def compute_mask(self, input, input_mask=None):
+        return None
+
+    def call(self, x, mask=None):
+        features_dim = self.features_dim
+        step_dim = self.step_dim
+        eij = K.reshape(K.dot(K.reshape(x, (-1, features_dim)), K.reshape(self.W, (features_dim, 1))), (-1, step_dim))
+        if self.bias:
+            eij += self.b
+        eij = K.tanh(eij)
+        a = K.exp(eij)
+        if mask is not None:
+            a *= K.cast(mask, K.floatx())
+        a /= K.cast(K.sum(a, axis=1, keepdims=True) + K.epsilon(), K.floatx())
+        a = K.expand_dims(a)
+        weighted_input = x * a
+        return K.sum(weighted_input, axis=1)
+
+    def compute_output_shape(self, input_shape):
+        return input_shape[0],  self.features_dim
+    
+
+lstm_layer = LSTM(300, dropout=0.25, recurrent_dropout=0.25, return_sequences=True)
+
+inp = Input(shape=(maxlen,), dtype='int32')
+embedding= embedding_layer(inp)
+x = lstm_layer(embedding)
+x = Dropout(0.25)(x)
+merged = Attention(maxlen)(x)
+merged = Dense(256, activation='relu')(merged)
+merged = Dropout(0.25)(merged)
+merged = BatchNormalization()(merged)
+outp = Dense(8, activation='softmax')(merged)
+
+AttentionLSTM = Model(inputs=inp, outputs=outp)
+AttentionLSTM.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['acc'])
+
+AttentionLSTM.summary()
+
+callbacks = [
+    ReduceLROnPlateau(),
+    EarlyStopping(patience=5),
+    ModelCheckpoint(filepath=f'{D_PATH}/e_lstm_attention.h5', save_best_only=True)
+]
+
+early_stopping =EarlyStopping(patience=5)
+bst_model_path = f'{D_PATH}/e_lstm_attention.h5'
+model_checkpoint = ModelCheckpoint(bst_model_path, save_best_only=True)
+
+BATCH_SIZE = 64
+attlstm_history = AttentionLSTM.fit(x_train, 
+                                    y_train, 
+                                    batch_size=BATCH_SIZE, 
+                                    epochs=15,
+                                    # class_weight=class_weight,
+                                    validation_data=(x_dev, y_dev))
+                                    
+                                    def evaluate_accuracy(model):
+    predicted = model.predict(x_test)
+    diff = y_test.argmax(axis=-1) - predicted.argmax(axis=-1)
+    corrects = np.where(diff == 0)[0].shape[0]
+    total = y_test.shape[0]
+    return float(corrects/total)
+
+dnn_model = load_model(f'{D_PATH}/e_model-simple.h5')
+cnn_model = load_model(f'{D_PATH}/e_model-conv1d.h5')
+lstm_model = load_model(f'{D_PATH}/e_model-lstm.h5')
+
+TextCNN = load_model(f'{D_PATH}/e_text-cnn-conv1d.h5')
+BiGRU = load_model(f'{D_PATH}/e_lstm_gru.h5')
+# AttentionLSTM = load_model('lstm_attention.h5')
+
+print("model DNN accuracy:          %.6f" % evaluate_accuracy(dnn_model))
+print("model CNN accuracy:          %.6f" % evaluate_accuracy(cnn_model))
+print("model LSTM accuracy:          %.6f" % evaluate_accuracy(lstm_model))
+print("model TextCNN accuracy:          %.6f" % evaluate_accuracy(TextCNN))
+print("model Bidirectional GRU + Conv:  %.6f" % evaluate_accuracy(BiGRU))
+print("model LSTM with Attention:       %.6f" % evaluate_accuracy(AttentionLSTM))
+
+dnn_real_pred = dnn_model.predict(x_test)
+lstm_real_pred = lstm_model.predict(x_test)
+cnn_real_pred = cnn_model.predict(x_test)
+TextCNN_real_pred = TextCNN.predict(x_test)
+BiGRU_real_pred = BiGRU.predict(x_test)
+AttentionLSTM_real_pred = AttentionLSTM.predict(x_test)
+
+
+dl_ens_pred = np.argmax((dnn_real_pred + cnn_real_pred + BiGRU_real_pred + AttentionLSTM_real_pred) / 4.0, axis=1)
+print(accuracy_score(np.argmax(np.array(y_test), axis=1), dl_ens_pred))
+
+
+col_name = ['anger', 'disgust', 'fear', 'joy', 'neutral', 'non-neutral', 'sadness', 'surprise']
+
+dnn_real_pred = dnn_model.predict(x_realtest)
+pd.DataFrame(dnn_real_pred, columns = col_name).to_csv(f'{D_PATH}/영어_dnn_50.csv')
+
+lstm_real_pred = lstm_model.predict(x_realtest)
+pd.DataFrame(lstm_real_pred, columns = col_name).to_csv(f'{D_PATH}/영어_lstm_51.csv')
+
+cnn_real_pred = cnn_model.predict(x_realtest)
+pd.DataFrame(cnn_real_pred, columns = col_name).to_csv(f'{D_PATH}/영어_cnn_51.csv')
+
+TextCNN_real_pred = TextCNN.predict(x_realtest)
+pd.DataFrame(TextCNN_real_pred, columns = col_name).to_csv(f'{D_PATH}/영어_textcnn_49.csv')
+
+BiGRU_real_pred = BiGRU.predict(x_realtest)
+pd.DataFrame(BiGRU_real_pred, columns = col_name).to_csv(f'{D_PATH}/영어_bigru_51.csv')
+
+AttentionLSTM_real_pred = AttentionLSTM.predict(x_realtest)
+pd.DataFrame(AttentionLSTM_real_pred, columns = col_name).to_csv(f'{D_PATH}/영어_lstmatt_51.csv')
+
+# dl_ens_pred = (dnn_real_pred + BiGRU_real_pred + AttentionLSTM_real_pred) / 3.0
+# dl_ens_pred = np.argmax(dl_ens_pred,axis=1)
+# dl_ens_pred = pd.DataFrame(dl_ens_pred)
+# dl_ens_pred.columns = ['Predicted']
+# dl_ens_pred['Predicted'] = dl_ens_pred['Predicted'].apply(lambda x: int_category[x])
+# dl_ens_pred.to_csv(f'{D_PATH}/english_submission_v3.csv')
+
+!pip install transformers --quiet # package installer for python
+
+import torch
+from transformers import BertModel, BertTokenizer
+
+pretrained_weights = 'bert-base-uncased'
+tokenizer = BertTokenizer.from_pretrained(pretrained_weights)
+model = BertModel.from_pretrained(pretrained_weights)
+
+import json
+
+data = {'train': {'speaker': [], 'utterance': [], 'emotion': []},
+        'dev': {'speaker': [], 'utterance': [], 'emotion': []},
+        'test': {'speaker': [], 'utterance': [], 'emotion': []}}
+
+for dtype in ['train', 'dev', 'test']:
+  for dialog in json.loads(open('/content/drive/MyDrive/자연어처리_플젝/friends_' + dtype + '.json').read()):
+    for line in dialog:
+      data[dtype]['speaker'].append(line['speaker'])
+      data[dtype]['utterance'].append(line['utterance'])
+      data[dtype]['emotion'].append(line['emotion'])
+      
+      import torch.nn as nn
+from transformers import BertModel, BertTokenizer
+
+class Model(nn.Module):
+  def __init__(self):
+    super().__init__()
+    self.bert_tokenizer = BertTokenizer.from_pretrained(pretrained_weights)
+    self.bert_model = BertModel.from_pretrained(pretrained_weights)
+    self.linear = torch.nn.Linear(768, len(e2i_dict))
+
+  def forward(self, utterance):
+    tokens = self.bert_tokenizer.tokenize(utterance)
+    tokens = ['[CLS]'] + tokens + ['[SEP]'] # (len)
+    ids = [tokenizer.convert_tokens_to_ids(tokens)] # (bat=1, len)
+    input_tensor = torch.tensor(ids).cuda()
+
+    hidden_tensor = self.bert_model(input_tensor)[0] # (bat, len, hid)
+    hidden_tensor = hidden_tensor[:, 0, :] # (bat, hid)
+    logit = self.linear(hidden_tensor)
+    return logit
+    
+    from sklearn.metrics import precision_score, recall_score, f1_score
+
+def evaluate(true_list, pred_list):
+  precision = precision_score(true_list, pred_list, average=None)
+  recall = recall_score(true_list, pred_list, average=None)
+  micro_f1 = f1_score(true_list, pred_list, average='micro')
+  print('precision:\t', ['%.4f' % v for v in precision])
+  print('recall:\t\t', ['%.4f' % v for v in recall])
+  print('micro_f1: %.6f' % micro_f1)
+  
+pretrained_weights = 'bert-base-uncased'
+learning_rate = 1e-5
+n_epoch = 2
+
+import re
+def decontract(sentence):
+    # specific
+    sentence = re.sub(r"won’t", "will not", sentence)
+    sentence = re.sub(r"can\’t", "can not", sentence)
+    sentence = re.sub(r"won\’t", "will not", sentence)
+    sentence = re.sub(r"can’t", "can not", sentence)
+    sentence = re.sub("cant", "can not", sentence)
+    sentence = re.sub("dont", "do not", sentence)
+    sentence = re.sub("y\’", "you ", sentence)
+
+    # general
+    sentence = re.sub(r"n\’t", " not", sentence)
+    sentence = re.sub(r"\’re", " are", sentence)
+    sentence = re.sub(r"\’s", " is", sentence)
+    sentence = re.sub(r"\’d", " would", sentence)
+    sentence = re.sub(r"\’ll", " will", sentence)
+    sentence = re.sub(r"\’t", " not", sentence)
+    sentence = re.sub(r"\’ve", " have", sentence)
+    sentence = re.sub(r"\’m", " am", sentence)
+    sentence = re.sub(r"n\'t", " not", sentence)
+
+    sentence = re.sub(r"\'re", " are", sentence)
+    sentence = re.sub(r"\'s", " is", sentence)
+    sentence = re.sub(r"\'d", " would", sentence)
+    sentence = re.sub(r"\'ll", " will", sentence)
+    sentence = re.sub(r"\'t", " not", sentence)
+    sentence = re.sub(r"\'ve", " have", sentence)
+    sentence = re.sub(r"\'m", " am", sentence)
+    return sentence
+
+def preprocessing(a,b):
+  concat_func = lambda x,y: x + " " + str(y)
+  c = list(map(concat_func,a, b)) # list the map function
+  c = [x.lower() for x in c]
+  c = [x.replace("\x92", "’") for x in c]
+  c = [x.replace("\xa0", "’") for x in c]
+  c = [decontract(x) for x in c]
+  # c = [re.sub(r'[?|!|\'|"|#|:]', r' ', x) for x in c]
+  # c = [re.sub(r'[|>|<|*|\|^|_|~|.|,|)|(|\|/]', r' ', x) for x in c]
+  return c
+
+
+
+data['train']['new_utt'] = preprocessing(data['train']['speaker'], data['train']['utterance'])
+data['test']['new_utt'] = preprocessing(data['test']['speaker'], data['test']['utterance'])
+data['dev']['new_utt'] = preprocessing(data['dev']['speaker'], data['dev']['utterance'])
+
+
+import os
+seed_val = 42
+
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+import torch
+from tqdm import tqdm_notebook
+
+model = Model()
+model.cuda()
+criterion = torch.nn.CrossEntropyLoss() # LogSoftmax & NLLLoss
+optimizer = torch.optim.Adam(model.parameters(), learning_rate)
+
+for i_epoch in range(n_epoch):
+  print('i_epoch:', i_epoch)
+
+  model.train()
+  for i_batch in tqdm_notebook(range(len(data['train']['new_utt']))):
+    logit = model(data['train']['new_utt'][i_batch])
+    target = torch.tensor([e2i_dict[data['train']['emotion'][i_batch]]]).cuda()
+    loss = criterion(logit, target)
+    loss.backward()
+    optimizer.step()
+    optimizer.zero_grad()
+  
+  model.eval()
+  pred_list, true_list = [], []
+  for i_batch in tqdm_notebook(range(len(data['dev']['new_utt']))):
+    logit = model(data['dev']['new_utt'][i_batch])
+    _, max_idx = torch.max(logit, dim=-1)
+    pred_list += max_idx.tolist()
+    true_list += [e2i_dict[data['dev']['emotion'][i_batch]]]
+  evaluate(pred_list, true_list) # print results
+  
+  import pandas as pd
+en_data = pd.read_csv(f'/content/drive/MyDrive/자연어처리_플젝/en_data.csv')
+en_data['new_utt'] = preprocessing(en_data['speaker'], en_data['utterance'])
+print(en_data['new_utt'])
+
+import numpy as np
+def softmax(x):
+    """Compute softmax values for each sets of scores in x."""
+    e_x = np.exp(x - np.max(x))
+    return e_x / e_x.sum()
+
+pred_list = []
+for i_batch in tqdm_notebook(range(len(en_data['utterance']))):
+  logits = model(en_data['utterance'][i_batch])
+  logits = logits.detach().cpu().numpy()
+  logits = softmax(logits).tolist()[0]
+  pred_list.append(logits)
+  # _, max_idx = torch.max(logit, dim=-1)
+  # pred_emotion = max_idx.tolist()[0]
+  # pred_list.append(i2e_dict[pred_emotion])
+
+pred_df = pd.DataFrame(pred_list)
+pred_df.columns = [
+'surprise',
+ 'sadness',
+ 'joy',
+ 'fear',
+ 'disgust',
+ 'non-neutral',
+ 'neutral',
+ 'anger']
+
+pred_df.to_csv('/content/drive/MyDrive/자연어처리_플젝/영어_고대_버트_f58.csv', index=False)
+
+pred_df.to_csv('/content/drive/MyDrive/자연어처리_플젝/영어_고대_버트_f58.csv', index=False)
