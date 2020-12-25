@@ -1,0 +1,796 @@
+import pandas as pd
+import re
+import collections
+from tqdm import tqdm
+import tqdm.notebook as tq
+import spacy
+import numpy as np
+from sklearn.preprocessing import LabelEncoder
+from keras.preprocessing.text import Tokenizer
+from keras.models import Sequential
+from keras.layers import Dense
+from keras.preprocessing.sequence import pad_sequences
+from keras.layers import Input, Dense, Dropout, Embedding, LSTM, Flatten
+from keras.models import Model
+from keras.utils import to_categorical
+from keras.callbacks import ModelCheckpoint
+import seaborn as sns
+from keras.models import Sequential
+from keras.layers import Dense, Activation, Embedding, LSTM, Flatten, GlobalMaxPool1D, MaxPooling1D, Dropout, Conv1D, \
+    Conv3D, MaxPooling3D, GlobalMaxPool3D,SpatialDropout1D
+from keras.callbacks import ReduceLROnPlateau, EarlyStopping, ModelCheckpoint
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+
+import pandas as pd
+import numpy as np
+%matplotlib inline
+import matplotlib.pyplot as plt
+import re
+import urllib.request
+! pip install konlpy
+from konlpy.tag import Okt
+from tensorflow.keras.preprocessing.text import Tokenizer
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+
+
+D_PATH = '/content/drive/MyDrive/자연어처리_플젝'
+
+# 판다스로 훈련셋과 테스트셋 데이터 로드
+train = pd.read_csv(f'{D_PATH}/ratings_train.txt', sep='\t')
+test = pd.read_csv(f'{D_PATH}/ratings_test.txt', sep='\t')
+
+train = train.dropna()
+test = test.dropna()
+
+print(train.shape)
+print(test.shape)
+
+emoji_pattern = re.compile("["
+                           u"\U0001F600-\U0001F64F"  # emoticons
+                           u"\U0001F300-\U0001F5FF"  # symbols & pictographs
+                           u"\U0001F680-\U0001F6FF"  # transport & map symbols
+                           u"\U0001F1E0-\U0001F1FF"  # flags (iOS)
+                           u"\U00002702-\U000027B0"
+                           u"\U000024C2-\U0001F251"
+                           "]+", flags=re.UNICODE)
+
+def preprocessing(dfDATA):
+  dfDATA['document_clean'] = dfDATA['document'].str.lower()
+  dfDATA['document_clean'] = dfDATA['document_clean'].apply(lambda x: re.sub(r'[.|?|!|\'|"|#|:]', r' ', x))
+  dfDATA['document_clean'] = dfDATA['document_clean'].apply(lambda x: re.sub(r'[|>|<|*|\|^|_|~|.|,|)|(|\|/]', r' ', x))
+  dfDATA['document_clean'] = dfDATA['document_clean'].apply(lambda x: x.replace("[", " "))
+  dfDATA['document_clean'] = dfDATA['document_clean'].apply(lambda x: x.replace("]", " "))
+  dfDATA['document_clean'] = dfDATA['document_clean'].apply(lambda x: x.strip())
+  dfDATA['document_clean'] = dfDATA['document_clean'].apply(lambda x: x.replace("\n", " "))
+  dfDATA['document_clean'] = dfDATA['document_clean'].apply(lambda x: ' '.join(x.split()))
+  return dfDATA
+
+train = preprocessing(train)
+test = preprocessing(test)
+
+
+!pip install mxnet
+!pip install gluonnlp pandas tqdm
+!pip install sentencepiece
+!pip install transformers
+!pip install torch
+!pip install git+https://git@github.com/SKTBrain/KoBERT.git@master
+
+from gluonnlp.data import SentencepieceTokenizer
+from kobert.utils import get_tokenizer
+tok_path = get_tokenizer()
+sp  = SentencepieceTokenizer(tok_path)
+
+X_train = []
+for sentence in train['document_clean']:
+    X_train.append(sp(sentence))
+    # temp_X = [word for word in temp_X if not word in stopwords] # 불용어 제거
+
+X_test = []
+for sentence in test['document_clean']:
+    X_test.append(sp(sentence))
+    # temp_X = [word for word in temp_X if not word in stopwords] # 불용어 제거
+    
+tokenizer = Tokenizer()
+tokenizer.fit_on_texts(X_train)
+print(tokenizer.word_index)
+
+threshold = 3
+total_cnt = len(tokenizer.word_index) # 단어의 수
+rare_cnt = 0 # 등장 빈도수가 threshold보다 작은 단어의 개수를 카운트
+total_freq = 0 # 훈련 데이터의 전체 단어 빈도수 총 합
+rare_freq = 0 # 등장 빈도수가 threshold보다 작은 단어의 등장 빈도수의 총 합
+
+# 단어와 빈도수의 쌍(pair)을 key와 value로 받는다.
+for key, value in tokenizer.word_counts.items():
+    total_freq = total_freq + value
+
+    # 단어의 등장 빈도수가 threshold보다 작으면
+    if(value < threshold):
+        rare_cnt = rare_cnt + 1
+        rare_freq = rare_freq + value
+
+print('단어 집합(vocabulary)의 크기 :',total_cnt)
+print('등장 빈도가 %s번 이하인 희귀 단어의 수: %s'%(threshold - 1, rare_cnt))
+print("단어 집합에서 희귀 단어의 비율:", (rare_cnt / total_cnt)*100)
+print("전체 등장 빈도에서 희귀 단어 등장 빈도 비율:", (rare_freq / total_freq)*100)
+
+# 전체 단어 개수 중 빈도수 2이하인 단어 개수는 제거.
+# 0번 패딩 토큰과 1번 OOV 토큰을 고려하여 +2
+vocab_size = total_cnt - rare_cnt + 2
+print('단어 집합의 크기 :',vocab_size)
+
+tokenizer = Tokenizer(vocab_size, oov_token = 'OOV') 
+tokenizer.fit_on_texts(X_train)
+X_train = tokenizer.texts_to_sequences(X_train)
+X_test = tokenizer.texts_to_sequences(X_test)
+
+y_train = np.array(train['label'])
+y_test = np.array(test['label'])
+
+drop_train = [index for index, sentence in enumerate(X_train) if len(sentence) < 1]
+
+# 빈 샘플들을 제거
+X_train = np.delete(X_train, drop_train, axis=0)
+y_train = np.delete(y_train, drop_train, axis=0)
+print(len(X_train))
+print(len(y_train))
+
+print('리뷰의 최대 길이 :',max(len(l) for l in X_train))
+print('리뷰의 평균 길이 :',sum(map(len, X_train))/len(X_train))
+plt.hist([len(s) for s in X_train], bins=50)
+plt.xlabel('length of samples')
+plt.ylabel('number of samples')
+plt.show()
+
+def below_threshold_len(max_len, nested_list):
+  cnt = 0
+  for s in nested_list:
+    if(len(s) <= max_len):
+        cnt = cnt + 1
+  print('전체 샘플 중 길이가 %s 이하인 샘플의 비율: %s'%(max_len, (cnt / len(nested_list))*100))
+  
+max_len = 30
+below_threshold_len(max_len, X_train)
+
+X_train = pad_sequences(X_train, maxlen = max_len)
+X_test = pad_sequences(X_test, maxlen = max_len)
+
+# EMBED_SIZE = 20
+# BATCH_SIZE = 16
+
+EMBED_SIZE = 200
+NUM_FILTERS = 256 
+NUM_WORDS = 10 
+BATCH_SIZE = 64 
+NUM_EPOCHS = 20
+
+max_words = len(tokenizer.word_index) + 1
+model = Sequential()
+model.add(Embedding(vocab_size, 200))
+model.add(SpatialDropout1D(0.2))
+model.add(GlobalMaxPool1D())
+model.add(Dense(1, activation='sigmoid'))
+model.compile(optimizer="adam", loss='binary_crossentropy', metrics=["accuracy"])
+
+model.summary()
+
+callbacks = [
+    ReduceLROnPlateau(),
+    EarlyStopping(patience=4),
+    ModelCheckpoint(filepath=f'{D_PATH}/k_model-simple.h5', save_best_only=True)
+]
+
+
+history = model.fit(X_train, y_train,
+                    epochs=NUM_EPOCHS,
+                    batch_size=BATCH_SIZE,
+                    validation_split=0.2,
+                    callbacks=callbacks)
+                    
+from tensorflow.keras.models import load_model
+results = pd.DataFrame()
+
+dnn_model = load_model(f'{D_PATH}/k_model-simple.h5')
+metrics = dnn_model.evaluate(X_test, y_test)
+print("{}: {}".format(dnn_model.metrics_names[1], metrics[1]))
+
+from keras.layers import Dense, Activation, Embedding, Flatten, GlobalMaxPool1D, Dropout, Conv1D
+
+model = Sequential()
+model.add(Embedding(vocab_size, 200))
+model.add(SpatialDropout1D(0.2))
+model.add(Conv1D(NUM_FILTERS, NUM_WORDS, activation='relu')) #padding='valid', strides=1 
+model.add(GlobalMaxPool1D())
+model.add(Dense(1, activation='sigmoid'))
+model.compile(optimizer="adam", loss='binary_crossentropy', metrics=["accuracy"])
+
+model.summary()
+
+callbacks = [
+    ReduceLROnPlateau(),
+    EarlyStopping(patience=4),
+    ModelCheckpoint(filepath=f'{D_PATH}/k_model-conv1d.h5', save_best_only=True)
+]
+
+history = model.fit(X_train, y_train,
+                    # class_weight=class_weight,
+                    epochs=NUM_EPOCHS,
+                    batch_size=BATCH_SIZE,
+                    validation_split=0.2,
+                    callbacks=callbacks)
+
+cnn_model = load_model(f'{D_PATH}/k_model-conv1d.h5')
+metrics = cnn_model.evaluate(X_test, y_test)
+print("{}: {}".format(cnn_model.metrics_names[1], metrics[1]))
+
+# Bidrectional LSTM with convolution
+# from https://www.kaggle.com/eashish/bidirectional-gru-with-convolution
+
+from keras.layers import GlobalAveragePooling1D, BatchNormalization, concatenate
+from keras.layers import Reshape, merge, Concatenate, Lambda, Average
+
+from keras.layers import Dense, Input, LSTM, Bidirectional, Activation, Conv1D, GRU, TimeDistributed
+from keras.layers import Dropout, Embedding, GlobalMaxPooling1D, MaxPooling1D, Add, Flatten, SpatialDropout1D
+
+model = Sequential()
+model.add(Embedding(vocab_size, 200))
+model.add(SpatialDropout1D(0.2))
+model.add(Bidirectional(GRU(128, return_sequences=True, dropout=0.1, recurrent_dropout=0.1)))
+model.add(Conv1D(64, kernel_size=3))
+# model.add(GlobalAveragePooling1D())
+model.add(GlobalMaxPooling1D())
+model.add(Dense(1, activation='sigmoid'))
+model.compile(optimizer="adam", loss='binary_crossentropy', metrics=["accuracy"])
+model.summary()
+
+# training
+callbacks = [
+    ReduceLROnPlateau(),
+    EarlyStopping(patience=4),
+    ModelCheckpoint(filepath=f'{D_PATH}/k_lstm_gru.h5', save_best_only=True)
+]
+
+
+bigru_history = model.fit(X_train, 
+                          y_train, 
+                              batch_size=BATCH_SIZE, 
+                              epochs=NUM_EPOCHS, 
+                          callbacks=callbacks,
+                          validation_split=0.2)
+                          
+gru_model = load_model(f'{D_PATH}/k_lstm_gru.h5')
+metrics = gru_model.evaluate(X_test, y_test)
+print("{}: {}".format(gru_model.metrics_names[1], metrics[1]))
+
+# predicted = dnn_model.predict(X_test)
+predicted_lst = np.where(predicted >= 0.5, 1, 0)
+import itertools
+merged = list(itertools.chain(*predicted_lst))
+merged
+diff = y_test - merged
+corrects = np.where(diff == 0)[0].shape[0]
+total = y_test.shape[0]
+# return float(corrects/total)
+
+import itertools
+
+def evaluate_accuracy(model):
+    predicted = model.predict(X_test)
+    predicted_lst = np.where(predicted >= 0.5, 1, 0)
+    merged = list(itertools.chain(*predicted_lst))
+    diff = y_test - merged
+    corrects = np.where(diff == 0)[0].shape[0]
+    total = y_test.shape[0]
+    return float(corrects/total)
+
+dnn_model = load_model(f'{D_PATH}/k_model-simple.h5')
+cnn_model = load_model(f'{D_PATH}/k_model-conv1d.h5')
+
+# TextCNN = load_model(f'{D_PATH}/k_text-cnn-conv1d.h5')
+BiGRU = load_model(f'{D_PATH}/k_lstm_gru.h5')
+# AttentionLSTM = load_model('lstm_attention.h5')
+
+print("model DNN accuracy:          %.6f" % evaluate_accuracy(dnn_model))
+print("model CNN accuracy:          %.6f" % evaluate_accuracy(cnn_model))
+# print("model LSTM accuracy:          %.6f" % evaluate_accuracy(lstm_model))
+# print("model TextCNN accuracy:          %.6f" % evaluate_accuracy(TextCNN))
+print("model Bidirectional GRU + Conv:  %.6f" % evaluate_accuracy(BiGRU))
+# print("model LSTM with Attention:       %.6f" % evaluate_accuracy(AttentionLSTM))
+
+real_test = pd.read_csv(f'{D_PATH}/ko_data.csv', encoding='cp949')
+real_test['document'] = real_test['Sentence'].copy()
+real_test = preprocessing(real_test)
+X_real_test = []
+for sentence in real_test['document_clean']:
+    X_real_test.append(sp(sentence))
+X_real_test = tokenizer.texts_to_sequences(X_real_test)
+X_real_test = pad_sequences(X_real_test, maxlen = max_len)
+
+dnn_real_pred = dnn_model.predict(X_real_test)
+cnn_real_pred = cnn_model.predict(X_real_test)
+BiGRU_real_pred = BiGRU.predict(X_real_test)
+# # dl_ens_pred = (dnn_real_pred + BiGRU_real_pred + cnn_real_pred) / 3.0
+# # dl_ens_pred_lst = np.where(dl_ens_pred >= 0.5, 1, 0)
+# dl_ens_pred_df = pd.DataFrame(dl_ens_pred_lst)
+# dl_ens_pred_df.columns = ['Predicted']
+# submission = pd.concat([real_test, dl_ens_pred_df], axis=1)[['Id', 'Predicted']]
+# # submission.to_csv(f'{D_PATH}/korean_submission_한국어내가만든거_임베드200.csv')
+
+pd.DataFrame(dnn_real_pred).to_csv(f'{D_PATH}/한국어_dnn_82.csv')
+pd.DataFrame(cnn_real_pred).to_csv(f'{D_PATH}/한국어_cnn_83.csv')
+pd.DataFrame(BiGRU_real_pred).to_csv(f'{D_PATH}/한국어_bigru_84.csv')
+
+
+# Hugging Face의 트랜스포머 모델을 설치
+!pip install transformers
+
+import tensorflow as tf
+import torch
+
+from transformers import BertTokenizer
+from transformers import BertForSequenceClassification, AdamW, BertConfig
+from transformers import get_linear_schedule_with_warmup
+from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
+from keras.preprocessing.sequence import pad_sequences
+from sklearn.model_selection import train_test_split
+
+import pandas as pd
+import numpy as np
+import random
+import time
+import datetime
+
+# 판다스로 훈련셋과 테스트셋 데이터 로드
+train = pd.read_csv(f'{D_PATH}/ratings_train.txt', sep='\t')
+test = pd.read_csv(f'{D_PATH}/ratings_test.txt', sep='\t')
+
+print(train.shape)
+print(test.shape)
+
+# 리뷰 문장 추출
+sentences = train['document']
+sentences[:10]
+
+# BERT의 입력 형식에 맞게 변환
+sentences = ["[CLS] " + str(sentence) + " [SEP]" for sentence in sentences]
+sentences[:10]
+
+# 라벨 추출
+labels = train['label'].values
+labels
+
+# BERT의 토크나이저로 문장을 토큰으로 분리
+tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-cased', do_lower_case=False)
+tokenized_texts = [tokenizer.tokenize(sent) for sent in sentences]
+
+print (sentences[0])
+print (tokenized_texts[0])
+
+# 입력 토큰의 최대 시퀀스 길이
+MAX_LEN = 128
+
+# 토큰을 숫자 인덱스로 변환
+input_ids = [tokenizer.convert_tokens_to_ids(x) for x in tokenized_texts]
+
+# 문장을 MAX_LEN 길이에 맞게 자르고, 모자란 부분을 패딩 0으로 채움
+input_ids = pad_sequences(input_ids, maxlen=MAX_LEN, dtype="long", truncating="post", padding="post")
+
+input_ids[0]
+
+# 어텐션 마스크 초기화
+attention_masks = []
+
+# 어텐션 마스크를 패딩이 아니면 1, 패딩이면 0으로 설정
+# 패딩 부분은 BERT 모델에서 어텐션을 수행하지 않아 속도 향상
+for seq in input_ids:
+    seq_mask = [float(i>0) for i in seq]
+    attention_masks.append(seq_mask)
+
+print(attention_masks[0])
+
+
+# 훈련셋과 검증셋으로 분리
+train_inputs, validation_inputs, train_labels, validation_labels = train_test_split(input_ids,
+                                                                                    labels, 
+                                                                                    random_state=2018, 
+                                                                                    test_size=0.1)
+
+# 어텐션 마스크를 훈련셋과 검증셋으로 분리
+train_masks, validation_masks, _, _ = train_test_split(attention_masks, 
+                                                       input_ids,
+                                                       random_state=2018, 
+                                                       test_size=0.1)
+
+# 데이터를 파이토치의 텐서로 변환
+train_inputs = torch.tensor(train_inputs)
+train_labels = torch.tensor(train_labels)
+train_masks = torch.tensor(train_masks)
+validation_inputs = torch.tensor(validation_inputs)
+validation_labels = torch.tensor(validation_labels)
+validation_masks = torch.tensor(validation_masks)				
+
+print(train_inputs[0])
+print(train_labels[0])
+print(train_masks[0])
+print(validation_inputs[0])
+print(validation_labels[0])
+print(validation_masks[0])  
+
+# 배치 사이즈
+batch_size = 32
+# 원래 16
+
+# 파이토치의 DataLoader로 입력, 마스크, 라벨을 묶어 데이터 설정
+# 학습시 배치 사이즈 만큼 데이터를 가져옴
+train_data = TensorDataset(train_inputs, train_masks, train_labels)
+train_sampler = RandomSampler(train_data)
+train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=batch_size)
+
+validation_data = TensorDataset(validation_inputs, validation_masks, validation_labels)
+validation_sampler = SequentialSampler(validation_data)
+validation_dataloader = DataLoader(validation_data, sampler=validation_sampler, batch_size=batch_size)
+
+# 리뷰 문장 추출
+sentences = test['document']
+sentences[:10]
+
+# BERT의 입력 형식에 맞게 변환
+sentences = ["[CLS] " + str(sentence) + " [SEP]" for sentence in sentences]
+sentences[:10]
+
+# 라벨 추출
+labels = test['label'].values
+labels
+
+# BERT의 토크나이저로 문장을 토큰으로 분리
+tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-cased', do_lower_case=False)
+tokenized_texts = [tokenizer.tokenize(sent) for sent in sentences]
+
+print (sentences[0])
+print (tokenized_texts[0])
+
+# 입력 토큰의 최대 시퀀스 길이
+MAX_LEN = 128
+
+# 토큰을 숫자 인덱스로 변환
+input_ids = [tokenizer.convert_tokens_to_ids(x) for x in tokenized_texts]
+
+# 문장을 MAX_LEN 길이에 맞게 자르고, 모자란 부분을 패딩 0으로 채움
+input_ids = pad_sequences(input_ids, maxlen=MAX_LEN, dtype="long", truncating="post", padding="post")
+
+input_ids[0]
+
+# 어텐션 마스크 초기화
+attention_masks = []
+
+# 어텐션 마스크를 패딩이 아니면 1, 패딩이면 0으로 설정
+# 패딩 부분은 BERT 모델에서 어텐션을 수행하지 않아 속도 향상
+for seq in input_ids:
+    seq_mask = [float(i>0) for i in seq]
+    attention_masks.append(seq_mask)
+
+print(attention_masks[0])
+
+# 데이터를 파이토치의 텐서로 변환
+test_inputs = torch.tensor(input_ids)
+test_labels = torch.tensor(labels)
+test_masks = torch.tensor(attention_masks)
+
+print(test_inputs[0])
+print(test_labels[0])
+print(test_masks[0])
+
+# 배치 사이즈
+batch_size = 64
+
+# 파이토치의 DataLoader로 입력, 마스크, 라벨을 묶어 데이터 설정
+# 학습시 배치 사이즈 만큼 데이터를 가져옴
+test_data = TensorDataset(test_inputs, test_masks, test_labels)
+test_sampler = RandomSampler(test_data)
+test_dataloader = DataLoader(test_data, sampler=test_sampler, batch_size=batch_size)
+
+# GPU 디바이스 이름 구함
+device_name = tf.test.gpu_device_name()
+
+# GPU 디바이스 이름 검사
+if device_name == '/device:GPU:0':
+    print('Found GPU at: {}'.format(device_name))
+else:
+    raise SystemError('GPU device not found')
+    
+
+# 디바이스 설정
+if torch.cuda.is_available():    
+    device = torch.device("cuda")
+    print('There are %d GPU(s) available.' % torch.cuda.device_count())
+    print('We will use the GPU:', torch.cuda.get_device_name(0))
+else:
+    device = torch.device("cpu")
+    print('No GPU available, using the CPU instead.')
+    
+# 분류를 위한 BERT 모델 생성
+model = BertForSequenceClassification.from_pretrained("bert-base-multilingual-cased", num_labels=2)
+model.cuda()
+
+# 옵티마이저 설정
+optimizer = AdamW(model.parameters(),
+                  lr = 2e-5, # 학습률
+                  eps = 1e-8 # 0으로 나누는 것을 방지하기 위한 epsilon 값
+                )
+
+# 에폭수
+epochs = 4
+
+# 총 훈련 스텝 : 배치반복 횟수 * 에폭
+total_steps = len(train_dataloader) * epochs
+
+# 처음에 학습률을 조금씩 변화시키는 스케줄러 생성
+scheduler = get_linear_schedule_with_warmup(optimizer, 
+                                            num_warmup_steps = 0,
+                                            num_training_steps = total_steps)
+                                            
+# 정확도 계산 함수
+def flat_accuracy(preds, labels):
+    
+    pred_flat = np.argmax(preds, axis=1).flatten()
+    labels_flat = labels.flatten()
+
+    return np.sum(pred_flat == labels_flat) / len(labels_flat)
+    
+# 시간 표시 함수
+def format_time(elapsed):
+
+    # 반올림
+    elapsed_rounded = int(round((elapsed)))
+    
+    # hh:mm:ss으로 형태 변경
+    return str(datetime.timedelta(seconds=elapsed_rounded))
+    
+# 재현을 위해 랜덤시드 고정
+seed_val = 42
+random.seed(seed_val)
+np.random.seed(seed_val)
+torch.manual_seed(seed_val)
+torch.cuda.manual_seed_all(seed_val)
+
+# 그래디언트 초기화
+model.zero_grad()
+
+# 에폭만큼 반복
+for epoch_i in range(0, epochs):
+    
+    # ========================================
+    #               Training
+    # ========================================
+    
+    print("")
+    print('======== Epoch {:} / {:} ========'.format(epoch_i + 1, epochs))
+    print('Training...')
+
+    # 시작 시간 설정
+    t0 = time.time()
+
+    # 로스 초기화
+    total_loss = 0
+
+    # 훈련모드로 변경
+    model.train()
+        
+    # 데이터로더에서 배치만큼 반복하여 가져옴
+    for step, batch in enumerate(train_dataloader):
+        # 경과 정보 표시
+        if step % 500 == 0 and not step == 0:
+            elapsed = format_time(time.time() - t0)
+            print('  Batch {:>5,}  of  {:>5,}.    Elapsed: {:}.'.format(step, len(train_dataloader), elapsed))
+
+        # 배치를 GPU에 넣음
+        batch = tuple(t.to(device) for t in batch)
+        
+        # 배치에서 데이터 추출
+        b_input_ids, b_input_mask, b_labels = batch
+
+        # Forward 수행                
+        outputs = model(b_input_ids, 
+                        token_type_ids=None, 
+                        attention_mask=b_input_mask, 
+                        labels=b_labels)
+        
+        # 로스 구함
+        loss = outputs[0]
+
+        # 총 로스 계산
+        total_loss += loss.item()
+
+        # Backward 수행으로 그래디언트 계산
+        loss.backward()
+
+        # 그래디언트 클리핑
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+
+        # 그래디언트를 통해 가중치 파라미터 업데이트
+        optimizer.step()
+
+        # 스케줄러로 학습률 감소
+        scheduler.step()
+
+        # 그래디언트 초기화
+        model.zero_grad()
+
+    # 평균 로스 계산
+    avg_train_loss = total_loss / len(train_dataloader)            
+
+    print("")
+    print("  Average training loss: {0:.2f}".format(avg_train_loss))
+    print("  Training epcoh took: {:}".format(format_time(time.time() - t0)))
+        
+    # ========================================
+    #               Validation
+    # ========================================
+
+    print("")
+    print("Running Validation...")
+
+    #시작 시간 설정
+    t0 = time.time()
+
+    # 평가모드로 변경
+    model.eval()
+
+    # 변수 초기화
+    eval_loss, eval_accuracy = 0, 0
+    nb_eval_steps, nb_eval_examples = 0, 0
+
+    # 데이터로더에서 배치만큼 반복하여 가져옴
+    for batch in validation_dataloader:
+        # 배치를 GPU에 넣음
+        batch = tuple(t.to(device) for t in batch)
+        
+        # 배치에서 데이터 추출
+        b_input_ids, b_input_mask, b_labels = batch
+        
+        # 그래디언트 계산 안함
+        with torch.no_grad():     
+            # Forward 수행
+            outputs = model(b_input_ids, 
+                            token_type_ids=None, 
+                            attention_mask=b_input_mask)
+        
+        # 로스 구함
+        logits = outputs[0]
+
+        # CPU로 데이터 이동
+        logits = logits.detach().cpu().numpy()
+        label_ids = b_labels.to('cpu').numpy()
+        
+        # 출력 로짓과 라벨을 비교하여 정확도 계산
+        tmp_eval_accuracy = flat_accuracy(logits, label_ids)
+        eval_accuracy += tmp_eval_accuracy
+        nb_eval_steps += 1
+
+    print("  Accuracy: {0:.2f}".format(eval_accuracy/nb_eval_steps))
+    print("  Validation took: {:}".format(format_time(time.time() - t0)))
+
+print("")
+print("Training complete!")
+
+#시작 시간 설정
+t0 = time.time()
+
+# 평가모드로 변경
+model.eval()
+
+# 변수 초기화
+eval_loss, eval_accuracy = 0, 0
+nb_eval_steps, nb_eval_examples = 0, 0
+
+# 데이터로더에서 배치만큼 반복하여 가져옴
+for step, batch in enumerate(test_dataloader):
+    # 경과 정보 표시
+    if step % 100 == 0 and not step == 0:
+        elapsed = format_time(time.time() - t0)
+        print('  Batch {:>5,}  of  {:>5,}.    Elapsed: {:}.'.format(step, len(test_dataloader), elapsed))
+
+    # 배치를 GPU에 넣음
+    batch = tuple(t.to(device) for t in batch)
+    
+    # 배치에서 데이터 추출
+    b_input_ids, b_input_mask, b_labels = batch
+    
+    # 그래디언트 계산 안함
+    with torch.no_grad():     
+        # Forward 수행
+        outputs = model(b_input_ids, 
+                        token_type_ids=None, 
+                        attention_mask=b_input_mask)
+    
+    # 로스 구함
+    logits = outputs[0]
+
+    # CPU로 데이터 이동
+    logits = logits.detach().cpu().numpy()
+    label_ids = b_labels.to('cpu').numpy()
+    
+    # 출력 로짓과 라벨을 비교하여 정확도 계산
+    tmp_eval_accuracy = flat_accuracy(logits, label_ids)
+    eval_accuracy += tmp_eval_accuracy
+    nb_eval_steps += 1
+
+print("")
+print("Accuracy: {0:.2f}".format(eval_accuracy/nb_eval_steps))
+print("Test took: {:}".format(format_time(time.time() - t0)))
+
+# 입력 데이터 변환
+def convert_input_data(sentences):
+
+    # BERT의 토크나이저로 문장을 토큰으로 분리
+    tokenized_texts = [tokenizer.tokenize(sent) for sent in sentences]
+
+    # 입력 토큰의 최대 시퀀스 길이
+    MAX_LEN = 128
+
+    # 토큰을 숫자 인덱스로 변환
+    input_ids = [tokenizer.convert_tokens_to_ids(x) for x in tokenized_texts]
+    
+    # 문장을 MAX_LEN 길이에 맞게 자르고, 모자란 부분을 패딩 0으로 채움
+    input_ids = pad_sequences(input_ids, maxlen=MAX_LEN, dtype="long", truncating="post", padding="post")
+
+    # 어텐션 마스크 초기화
+    attention_masks = []
+
+    # 어텐션 마스크를 패딩이 아니면 1, 패딩이면 0으로 설정
+    # 패딩 부분은 BERT 모델에서 어텐션을 수행하지 않아 속도 향상
+    for seq in input_ids:
+        seq_mask = [float(i>0) for i in seq]
+        attention_masks.append(seq_mask)
+
+    # 데이터를 파이토치의 텐서로 변환
+    inputs = torch.tensor(input_ids)
+    masks = torch.tensor(attention_masks)
+
+    return inputs, masks
+    
+    # 문장 테스트
+def softmax(x):
+    """Compute softmax values for each sets of scores in x."""
+    e_x = np.exp(x - np.max(x))
+    return e_x / e_x.sum()
+    
+def test_sentences(sentences):
+
+    # 평가모드로 변경
+    model.eval()
+
+    # 문장을 입력 데이터로 변환
+    inputs, masks = convert_input_data(sentences)
+
+    # 데이터를 GPU에 넣음
+    b_input_ids = inputs.to(device)
+    b_input_mask = masks.to(device)
+            
+    # 그래디언트 계산 안함
+    with torch.no_grad():     
+        # Forward 수행
+        outputs = model(b_input_ids, 
+                        token_type_ids=None, 
+                        attention_mask=b_input_mask)
+
+    # 로스 구함
+    logits = outputs[0]
+
+    # CPU로 데이터 이동
+    logits = logits.detach().cpu().numpy()
+    logits = softmax(logits).tolist()[0]
+
+    return logits
+    
+D_PATH = '/content/drive/MyDrive/자연어처리_플젝'
+real_test = pd.read_csv(f'{D_PATH}/ko_data.csv', encoding='cp949')
+
+pred_score_lst = []
+for sentence in real_test['Sentence']:
+    pred_score_lst.append(test_sentences(sentence))
+    
+pred_score_df = pd.DataFrame(pred_score_lst, columns = ['Pos','Neg'])
+pred_score_df.to_csv(f'{D_PATH}/한국어_버트_87.csv')
